@@ -1,0 +1,272 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_RAILWAY_MYSQL",
+      "label": "Railway MySQL",
+      "description": "Existing MySQL data source",
+      "type": "datasource",
+      "pluginId": "mysql",
+      "pluginName": "MySQL"
+    }
+  ],
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "datasource": {
+        "type": "mysql",
+        "uid": "${DS_RAILWAY_MYSQL}"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "risk_level"
+            },
+            "properties": []
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "title": "Latest Buckling Risk by Segment",
+      "type": "table",
+      "targets": [
+        {
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT track_segment_id, risk_level, ROUND(buckling_score,1) AS buckling_score, ROUND(rail_temperature_c,1) AS rail_temp_c, ROUND(neutral_temperature_c,1) AS rnt_c, ROUND(train_speed_kmh,1) AS train_speed_kmh, train_id FROM buckling_risk_events b WHERE b.event_timestamp = (SELECT MAX(b2.event_timestamp) FROM buckling_risk_events b2 WHERE b2.track_segment_id=b.track_segment_id) ORDER BY FIELD(risk_level,'CRITICAL','HIGH','MEDIUM','LOW'), track_segment_id;",
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "id": true
+            },
+            "indexByName": {},
+            "renameByName": {}
+          }
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "mysql",
+        "uid": "${DS_RAILWAY_MYSQL}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "max": 100
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "id": 2,
+      "title": "Buckling Score Over Time",
+      "type": "timeseries",
+      "targets": [
+        {
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT event_timestamp AS time, track_segment_id AS metric, buckling_score FROM buckling_risk_events WHERE $__timeFilter(event_timestamp) ORDER BY event_timestamp;",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "mysql",
+        "uid": "${DS_RAILWAY_MYSQL}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "celsius"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 7
+      },
+      "id": 3,
+      "title": "Rail Temperature vs RNT",
+      "type": "timeseries",
+      "targets": [
+        {
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT event_timestamp AS time, track_segment_id AS metric, rail_temperature_c AS rail_temperature, neutral_temperature_c AS neutral_temperature FROM buckling_risk_events WHERE $__timeFilter(event_timestamp) ORDER BY event_timestamp;",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "mysql",
+        "uid": "${DS_RAILWAY_MYSQL}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "velocitykmh"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 7
+      },
+      "id": 4,
+      "title": "Train Speed Over Time",
+      "type": "timeseries",
+      "targets": [
+        {
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT event_timestamp AS time, train_id AS metric, train_speed_kmh AS actual_speed_kmh FROM buckling_risk_events WHERE $__timeFilter(event_timestamp) AND train_id IS NOT NULL ORDER BY event_timestamp;",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "mysql",
+        "uid": "${DS_RAILWAY_MYSQL}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "celsius"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 14
+      },
+      "id": 5,
+      "title": "Temperature Excess (Rail - RNT)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT event_timestamp AS time, track_segment_id AS metric, temperature_excess_c AS temperature_excess FROM buckling_risk_events WHERE $__timeFilter(event_timestamp) ORDER BY event_timestamp;",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "mysql",
+        "uid": "${DS_RAILWAY_MYSQL}"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 14
+      },
+      "id": 6,
+      "title": "Recent High/Critical Alerts",
+      "type": "table",
+      "targets": [
+        {
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT event_timestamp, track_segment_id, risk_level, train_id, ROUND(buckling_score,1) AS buckling_score, ROUND(rail_temperature_c,1) AS rail_temp_c, ROUND(temperature_excess_c,1) AS excess_c, ROUND(train_speed_kmh,1) AS speed_kmh FROM buckling_risk_events WHERE risk_level IN ('HIGH','CRITICAL') AND $__timeFilter(event_timestamp) ORDER BY event_timestamp DESC LIMIT 50;",
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "id": true
+            },
+            "indexByName": {},
+            "renameByName": {}
+          }
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "mysql",
+        "uid": "${DS_RAILWAY_MYSQL}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "wattpermsquaremeter"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 21
+      },
+      "id": 7,
+      "title": "Solar Radiation",
+      "type": "timeseries",
+      "targets": [
+        {
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT event_timestamp AS time, track_segment_id AS metric, solar_radiation_w_m2 AS solar_radiation FROM buckling_risk_events WHERE $__timeFilter(event_timestamp) ORDER BY event_timestamp;",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": [
+    "railway",
+    "kafka",
+    "safety",
+    "buckling"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "title": "Railway Safety - Buckling Monitor",
+  "description": "Real-time railway safety dashboard. Event timestamps are stored in UTC; Grafana displays them in browser local time.",
+  "timezone": "browser",
+  "version": 1
+}
