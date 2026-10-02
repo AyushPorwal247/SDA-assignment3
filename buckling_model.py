@@ -5,11 +5,13 @@ This is an educational simulation, not an engineering safety calculation.
 The model deliberately separates:
   1) Track buckling susceptibility: direct rail-temperature sensor reading,
      neutral/stress-free temperature, track condition and curvature.
-  2) Train dynamic exposure: a smaller speed-related term for a train moving
-     through a thermally vulnerable section.
-  3) Operational recommendation: a smooth, train-specific speed advisory based
-     on the resulting risk score. The recommendation is a project simulation
-     control, not a real railway operating limit.
+  2) Train dynamic exposure: a secondary speed-related term for a train
+     moving through a thermally vulnerable section.
+  3) Operational recommendation: a smooth, train-specific advisory maximum
+     speed based on the resulting risk score.
+
+The advisory speed is a simulated project value, not a real railway
+operating speed limit.
 """
 
 from __future__ import annotations
@@ -27,12 +29,15 @@ class SegmentProfile:
     curvature: float
 
 
+# Track-condition contribution to vulnerability.
 CONDITION_COMPONENT = {
     "GOOD": 0.0,
     "FAIR": 5.0,
     "POOR": 10.0,
 }
 
+
+# Build a profile for every configured track segment.
 SEGMENT_PROFILES = {
     segment: SegmentProfile(
         segment_id=segment,
@@ -44,53 +49,65 @@ SEGMENT_PROFILES = {
 }
 
 
-def recommended_speed_from_risk(
-    current_speed_kmh: float,
+def advisory_max_speed_from_risk(
     base_speed_kmh: float,
     operational_risk_score: float,
-    risk_level: str,
 ) -> float:
-    """Return a simulated operational speed advisory for the train.
+    """Calculate a simulated advisory maximum speed.
 
-    The recommendation is always capped at the train's current speed so the
-    system never advises acceleration during an elevated-risk condition.
-    HIGH and CRITICAL risk explicitly produce a lower target than the current
-    speed when the train is moving. These are project simulation controls, not
-    real railway operating limits.
+    The advisory maximum speed is determined by the calculated
+    operational risk, not by the train's current speed.
+
+    LOW risk:
+        No restriction; the normal/base speed is used.
+
+    Higher risk:
+        The advisory maximum speed is progressively reduced.
+
+    This is an educational simulation rule, not a real railway
+    operating speed limit.
     """
-    current = max(0.0, float(current_speed_kmh))
-    base = max(0.0, float(base_speed_kmh))
 
-    if risk_level == "LOW":
-        return round(min(current, base), 1)
-
-    # Smooth base-speed advisory that grows with risk, capped at a 50%
-    # reduction from the train's normal/base speed.
-    reduction_fraction = min(
-        0.50,
-        0.50 * max(0.0, operational_risk_score - 30.0) / 70.0,
+    base_speed = max(0.0, float(base_speed_kmh))
+    risk_score = max(
+        0.0,
+        min(100.0, float(operational_risk_score)),
     )
-    base_advisory = base * (1.0 - reduction_fraction)
 
-    # Safety-response rule for the simulation:
-    # HIGH  -> at least ~10% below the current speed
-    # CRITICAL -> at least ~20% below the current speed
-    # MEDIUM -> use the smooth base-speed advisory, never above current speed
-    if risk_level == "HIGH":
-        current_speed_target = current * 0.90
-    elif risk_level == "CRITICAL":
-        current_speed_target = current * 0.80
+    # ---------------------------------------------------------
+    # LOW RISK
+    # ---------------------------------------------------------
+    # No simulated speed restriction.
+    if risk_score < 30.0:
+        advisory_speed = base_speed
+
+    # ---------------------------------------------------------
+    # MEDIUM / HIGH / CRITICAL RISK
+    # ---------------------------------------------------------
     else:
-        current_speed_target = current
+        # Progressive reduction as risk increases.
+        #
+        # Risk = 30  -> 0% reduction
+        # Risk = 100 -> maximum 50% reduction
+        reduction_fraction = min(
+            0.50,
+            0.50 * (risk_score - 30.0) / 70.0,
+        )
 
-    recommended = min(current, base_advisory, current_speed_target)
+        advisory_speed = base_speed * (
+            1.0 - reduction_fraction
+        )
 
-    # Preserve a positive movement target when the train is moving. If it is
-    # already stopped, recommending 0 km/h is appropriate.
-    if current > 0.0:
-        recommended = max(0.0, recommended)
+    # Project-level lower floor.
+    advisory_speed = max(
+        40.0,
+        advisory_speed,
+    )
 
-    return round(recommended, 1)
+    return round(
+        advisory_speed,
+        1,
+    )
 
 
 def calculate_risk(
@@ -99,67 +116,229 @@ def calculate_risk(
     train_speed_kmh: float = 0.0,
     base_speed_kmh: float = 100.0,
 ) -> dict:
-    """Calculate project-level track susceptibility + operational risk."""
+    """Calculate project-level track susceptibility and operational risk."""
+
+    if segment_id not in SEGMENT_PROFILES:
+        raise ValueError(
+            f"Unknown track segment: {segment_id}"
+        )
+
     profile = SEGMENT_PROFILES[segment_id]
 
-    temperature_excess = max(0.0, rail_temperature_c - profile.rnt_c)
+    # =========================================================
+    # 1. THERMAL COMPONENT
+    # =========================================================
 
-    # Thermal loading is the largest component. A small excess above RNT starts
-    # the contribution; very large excesses saturate rather than growing forever.
+    # Difference between measured rail temperature and
+    # the segment's neutral/stress-free temperature.
+    temperature_excess = max(
+        0.0,
+        rail_temperature_c - profile.rnt_c,
+    )
+
+    # Thermal loading is the largest contributor.
+    #
+    # Below approximately 2°C above RNT:
+    #     contribution = 0
+    #
+    # Increasing excess:
+    #     contribution rises
+    #
+    # Very large excess:
+    #     contribution saturates at 55 points
     thermal_component = min(
         55.0,
-        max(0.0, (temperature_excess - 2.0) / 16.0) * 55.0,
+        max(
+            0.0,
+            (temperature_excess - 2.0) / 16.0,
+        ) * 55.0,
     )
 
-    condition_component = CONDITION_COMPONENT[profile.condition]
-    curvature_component = profile.curvature * 8.0
-    track_vulnerability_component = condition_component + curvature_component
+    # =========================================================
+    # 2. TRACK VULNERABILITY
+    # =========================================================
 
-    # Train speed is a secondary dynamic-exposure term. It is intentionally
-    # modest compared with thermal/track susceptibility and rises continuously.
+    # Track condition contribution.
+    condition_component = CONDITION_COMPONENT[
+        profile.condition
+    ]
+
+    # Curvature contribution.
+    curvature_component = (
+        profile.curvature * 8.0
+    )
+
+    # Combined infrastructure vulnerability.
+    track_vulnerability_component = (
+        condition_component
+        + curvature_component
+    )
+
+    # =========================================================
+    # 3. TRAIN DYNAMIC EXPOSURE
+    # =========================================================
+
+    # Current train speed directly contributes to the
+    # operational risk.
+    #
+    # Speed is still treated as a secondary factor compared
+    # with thermal loading and track vulnerability.
+    #
+    # At 0 km/h  -> 0 points
+    # At 60 km/h -> 5 points
+    # At 90 km/h -> 11.25 points
+    # At 120 km/h -> 20 points
+    #
+    # Values above 120 km/h saturate at 20 points.
+    current_speed = max(
+        0.0,
+        float(train_speed_kmh),
+    )
+
     speed_component = min(
-        15.0,
-        15.0 * (max(0.0, train_speed_kmh) / 120.0) ** 2,
+        20.0,
+        20.0
+        * (
+            current_speed / 120.0
+        ) ** 2,
     )
 
+    # =========================================================
+    # 4. TRACK BUCKLING SUSCEPTIBILITY
+    # =========================================================
+
+    # This represents the underlying vulnerability of the
+    # track before adding the moving train's dynamic exposure.
     track_susceptibility_score = min(
         100.0,
-        thermal_component + track_vulnerability_component,
+        thermal_component
+        + track_vulnerability_component,
     )
+
+    # =========================================================
+    # 5. OVERALL OPERATIONAL RISK
+    # =========================================================
+
+    # Current train speed is explicitly part of the final
+    # operational risk calculation.
     operational_risk_score = min(
         100.0,
-        track_susceptibility_score + speed_component,
+        track_susceptibility_score
+        + speed_component,
     )
+
+    # =========================================================
+    # 6. RISK CLASSIFICATION
+    # =========================================================
 
     if operational_risk_score >= 70.0:
         level = "CRITICAL"
+
     elif operational_risk_score >= 50.0:
         level = "HIGH"
+
     elif operational_risk_score >= 30.0:
         level = "MEDIUM"
+
     else:
         level = "LOW"
 
-    recommended_speed = recommended_speed_from_risk(
-        train_speed_kmh,
+    # =========================================================
+    # 7. ADVISORY MAXIMUM SPEED
+    # =========================================================
+
+    # IMPORTANT:
+    #
+    # Advisory speed is an OUTPUT of the calculated risk.
+    # It does NOT use the current train speed.
+    #
+    # Current speed -> affects risk
+    # Risk -> determines advisory maximum speed
+    advisory_max_speed = advisory_max_speed_from_risk(
         base_speed_kmh,
         operational_risk_score,
-        level,
     )
 
+    # =========================================================
+    # 8. OUTPUT
+    # =========================================================
+
     return {
-        "buckling_score": round(operational_risk_score, 2),
+        # Overall operational buckling-risk score.
+        "buckling_score": round(
+            operational_risk_score,
+            2,
+        ),
+
+        # LOW / MEDIUM / HIGH / CRITICAL
         "risk_level": level,
-        "rail_temperature_c": round(rail_temperature_c, 2),
-        "neutral_temperature_c": profile.rnt_c,
-        "temperature_excess_c": round(temperature_excess, 2),
+
+        # Direct rail-temperature sensor value.
+        "rail_temperature_c": round(
+            rail_temperature_c,
+            2,
+        ),
+
+        # Segment neutral/stress-free temperature.
+        "neutral_temperature_c": round(
+            profile.rnt_c,
+            2,
+        ),
+
+        # Rail temperature above RNT.
+        "temperature_excess_c": round(
+            temperature_excess,
+            2,
+        ),
+
+        # Track condition.
         "track_condition": profile.condition,
-        "curvature_index": round(profile.curvature, 4),
-        "thermal_component": round(thermal_component, 2),
-        "track_vulnerability_component": round(track_vulnerability_component, 2),
-        "speed_component": round(speed_component, 2),
-        "track_susceptibility_score": round(track_susceptibility_score, 2),
-        "dynamic_exposure_score": round(speed_component, 2),
-        "train_speed_kmh": round(train_speed_kmh, 2),
-        "recommended_speed_kmh": recommended_speed,
+
+        # Segment curvature index.
+        "curvature_index": round(
+            profile.curvature,
+            4,
+        ),
+
+        # Individual risk contributors.
+        "thermal_component": round(
+            thermal_component,
+            2,
+        ),
+
+        "track_vulnerability_component": round(
+            track_vulnerability_component,
+            2,
+        ),
+
+        "speed_component": round(
+            speed_component,
+            2,
+        ),
+
+        # Risk attributable to the track itself,
+        # before train dynamic exposure.
+        "track_susceptibility_score": round(
+            track_susceptibility_score,
+            2,
+        ),
+
+        # Explicitly expose dynamic train exposure.
+        "dynamic_exposure_score": round(
+            speed_component,
+            2,
+        ),
+
+        # Current train speed used in the risk calculation.
+        "train_speed_kmh": round(
+            current_speed,
+            2,
+        ),
+
+        # Keep the existing database/Grafana field name so
+        # the current setup does not require a schema change.
+        #
+        # Conceptually this is:
+        # "Advisory Maximum Speed"
+        "recommended_speed_kmh": advisory_max_speed,
     }
